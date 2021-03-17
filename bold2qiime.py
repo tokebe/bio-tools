@@ -4,6 +4,7 @@ import sys
 import shutil
 
 import pandas as pd
+from pandas.errors import ParserError
 
 NANS = [
     "nan",
@@ -236,69 +237,78 @@ def get_data(filename, excel_sheet=None):
 
     # check if filename exists
     if not os.path.exists(filename):
-        raise ValueError("file {} does not exist.".format(filename))
+        raise FileNotFoundError("file {} does not exist.".format(filename))
 
     # get raw data
-    if (os.path.splitext(filename)[1]
-        in [".xlsx", ".xlsm", ".xlsb",
-            ".xltx", ".xltm", ".xls",
-            ".xlt", ".xml"
-            ]):  # using excel_sheet file
-        if excel_sheet is not None:  # sheet given
-            if excel_sheet.isdigit():  # sheet number
+    try:
+        if (os.path.splitext(filename)[1]
+            in [".xlsx", ".xlsm", ".xlsb",
+                ".xltx", ".xltm", ".xls",
+                ".xlt", ".xml"
+                ]):  # using excel_sheet file
+            if excel_sheet is not None:  # sheet given
+                if excel_sheet.isdigit():  # sheet number
+                    raw_data = pd.read_excel(
+                        filename,
+                        sheet_name=int(excel_sheet) - 1,
+                        na_values=NANS,
+                        keep_default_na=True,
+                        # engine="python"
+                    )
+                else:  # sheet name
+                    raw_data = pd.read_excel(
+                        filename,
+                        sheet_name=excel_sheet,
+                        na_values=NANS,
+                        keep_default_na=True,
+                        # engine="python"
+                    )
+            else:  # sheet not given; use default first sheet
                 raw_data = pd.read_excel(
                     filename,
-                    sheet_name=int(excel_sheet) - 1,
+                    sheet_name=0,
                     na_values=NANS,
                     keep_default_na=True,
                     # engine="python"
                 )
-            else:  # sheet name
-                raw_data = pd.read_excel(
-                    filename,
-                    sheet_name=excel_sheet,
-                    na_values=NANS,
-                    keep_default_na=True,
-                    # engine="python"
-                )
-        else:  # sheet not given; use default first sheet
-            raw_data = pd.read_excel(
+
+        elif ".csv" in os.path.splitext(filename)[1]:  # using csv
+            raw_data = pd.read_csv(
                 filename,
-                sheet_name=0,
                 na_values=NANS,
                 keep_default_na=True,
-                # engine="python"
+                engine="python",
+                error_bad_lines=False,
+                warn_bad_lines=True
             )
 
-    elif ".csv" in os.path.splitext(filename)[1]:  # using csv
-        raw_data = pd.read_csv(
-            filename,
-            na_values=NANS,
-            keep_default_na=True,
-            engine="python"
-        )
+        elif ".tsv" in os.path.splitext(filename)[1]:  # using tsv
+            raw_data = pd.read_csv(
+                filename,
+                na_values=NANS,
+                keep_default_na=True,
+                sep="\t",
+                engine="python",
+                error_bad_lines=False,
+                warn_bad_lines=True
+            )
 
-    elif ".tsv" in os.path.splitext(filename)[1]:  # using tsv
-        raw_data = pd.read_csv(
-            filename,
-            na_values=NANS,
-            keep_default_na=True,
-            sep="\t",
-            engine="python"
-        )
-
-    # using txt; must figure out delimiter
-    elif ".txt" in os.path.splitext(filename)[1]:
-        raw_data = pd.read_csv(
-            filename,
-            na_values=NANS,
-            keep_default_na=True,
-            sep=None,
-            engine="python"
-        )
-    else:  # invalid extension
-        raise TypeError(
-            "data file type is unsupported, or file extension not included")
+        # using txt; must figure out delimiter
+        elif ".txt" in os.path.splitext(filename)[1]:
+            raw_data = pd.read_csv(
+                filename,
+                na_values=NANS,
+                keep_default_na=True,
+                sep=None,
+                engine="python",
+                error_bad_lines=False,
+                warn_bad_lines=True
+            )
+        else:  # invalid extension
+            raise TypeError(
+                "data file type is unsupported, or file extension not included")
+    except ParserError as e:
+        raise e
 
     return raw_data  # return extracted data
 
@@ -382,20 +392,7 @@ def main():
         "output_name", help="Output folder name and filename prefix")
     args = parser.parse_args()
 
-    data = None
-    try:
-        data = get_data(args.input_file, args.sheet)
-    except ValueError:
-        print("ERROR: Input file not found.")
-    except TypeError:
-        print("ERROR: Input type not supported.")
-
-    if data is None:
-        exit(-1)
-
-    data = filter_data(data)
-
-    # make output directory
+    # check if output directory already exists
     if os.path.isdir(args.output_name):
         resp = input(
             "The provided output name already exists as a folder. Overwrite? (y/n)\n> ")
@@ -407,6 +404,24 @@ def main():
         else:
             shutil.rmtree(args.output_name)
 
+    data = None
+    try:
+        data = get_data(args.input_file, args.sheet)
+    except FileNotFoundError:
+        print("ERROR: Input file not found.")
+    except TypeError:
+        print("ERROR: Input type not supported.")
+    except ParserError as e:
+        print(e)
+        print("ERROR: File parsing failed (file malformed)")
+        print("Please try opening the file in Excel and saving it to fix the file!")
+
+    if data is None:
+        exit(-1)
+
+    data = filter_data(data)
+
+    # make output directory
     os.mkdir(args.output_name)
 
     fname_prefix = os.path.split(args.output_name)[-1]
